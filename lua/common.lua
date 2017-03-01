@@ -29,11 +29,11 @@ local function list_to_table(list)
     return res
 end
 
-local function response_like(oid, uid)
+local function response_like(oid, uid, like_list)
     local res =  {}
     res["oid"] = oid
     res["uid"] = uid
-    res["like_list"] = {uid}
+    res["like_list"] = like_list
     return cjson.encode(res)
 end
 
@@ -88,6 +88,14 @@ local function check_validity(action, oid, uid)
     return 200, "ok"
 end
 
+local function table_keys( t )
+    local keys = {}
+    for k, _ in pairs( t ) do
+        keys[#keys + 1] = k
+    end
+    return keys
+end
+
 _M = {
     new_redis                = new_redis,
     lua_split                = lua_split,
@@ -97,6 +105,7 @@ _M = {
     response_err_msg         = response_err_msg,
     response_like            = response_like,
     check_validity           = check_validity,
+    table_keys               = table_keys,
     is_like                  = is_like
 }
 return _M
