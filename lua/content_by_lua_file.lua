@@ -6,101 +6,143 @@ local OBJECT_PREFIX = "object:"
 local COUNT_PREFIX = "count:"
 local USER_PREFIX = "user:"
 
-local function get_shm_object_key(oid, uid) 
-   return "like:" .. oid .. "," .. uid
+------------obj-tree-------------
+------------OBJECT-ROOT----------
+--------------/ \----------------
+------------O    O---------------
+-----------/ \   /\--------------
+----------O   O O  O-------------
+---------------------------------
+
+----------- user-tree------------
+---------------------------------
+------------USER-ROOT----------
+--------------/ \----------------
+------------O    O---------------
+-----------/ \   /\--------------
+----------O   O O  O-------------
+---------------------------------
+
+
+-------inner function------------
+
+local function _get_objects(oid)
+   local object_key = OBJECT_PREFIX .. oid
+   local object_likes = shm_objects:get(object_key)
+   if object_likes then
+       return cjson.decode(object_likes)
+   end
+
+   return nil
+end
+
+local function _get_userobj(uid)
+   local user_key = USER_PREFIX .. uid
+   local user_friends = shm_friends:get(user_key)
+   if user_friends then
+       return cjson.decode(user_friends)
+   end
+   return nil
 end
 
 -----need add lock------
 local function like_handler(oid, uid, page_size, is_friends)
-   local count_key = COUNT_PREFIX .. oid
-   local object_key = OBJECT_PREFIX .. oid
-   --redis.set(oid, uid)
-   local islike = common.is_like(shm_objects, oid, uid)
-   if islike then --already exists
-       result = common.response_err_msg(oid, uid, 501, "object already been liked.") 
-   else --new like
-       ----insert user to object liked
-       local object_likes = shm_objects:get(object_key)
-       if object_likes then
-           object_likes = cjson.decode(object_likes)
-           table.insert(object_likes, uid)
+   local object_likes = _get_objects(oid)
+   if object_likes then
+       if object_likes[uid] then
+           return common.response_err_msg(oid, uid, 501, "object already been liked.") 
        else
-           object_likes = {uid}
+           object_likes[uid] = true
+           object_likes['_objectcount'] = object_likes['_objectcount'] + 1
        end
-       ----increment user count
-       local count = shm_objects:get(count_key)
-       if count then 
-           shm_objects:incr(count_key, 1)
-       else
-           shm_objects:set(count_key, 1)
-       end
-       
-       shm_objects:set(object_key, cjson.encode(object_likes))
-       shm_objects:set(get_shm_object_key(oid, uid), 1)
-
-       result = common.response_like(oid, uid, object_likes)
+   else
+       object_likes = { _objectcount = 1, [uid] = true} 
    end
-   return result
+
+   shm_objects:set(OBJECT_PREFIX .. oid, cjson.encode(object_likes))
+   return common.response_like(oid, uid, common.table_keys_tonum(object_likes))
 end
 
+
 local function islike_handler(oid, uid, page_size, is_friends)
-   local islike = common.is_like(shm_objects, oid, uid) or 0
-   result = common.response_islike(oid, uid, islike)
-   return result
+   local islike = 0
+   local object_likes = _get_objects(oid)
+   if object_likes then
+       if object_likes[uid] then
+          islike = 1
+       end
+   end
+   return common.response_islike(oid, uid, islike)
 end
 
 local function count_handler(oid, uid, page_size, is_friends)
-   local count_key = COUNT_PREFIX .. oid
-   local count = shm_objects:get(count_key) or 0
-   ngx.log(ngx.ERR, "COUNT ---", count)
-   result = common.response_count(oid, count)  
-   return result
+   local count = 0
+   local object_likes = _get_objects(oid)
+   if object_likes then
+       count = object_likes["_objectcount"]
+   end
+   return common.response_count(oid, count)  
 end
 
+
 local function list_handler(oid, uid, page_size, is_friends)
-   local count_key = COUNT_PREFIX .. oid
-   local object_key = OBJECT_PREFIX .. oid
-   local object_likes = shm_objects:get(object_key)
+   local object_likes = _get_objects(oid)
    if object_likes then
-       page_size = tonumber(page_size)
-       object_likes = cjson.decode(object_likes)
-       return_len = page_size <= #object_likes and page_size or #object_likes
-       return_like_list = {}
-       for i=1, return_len do
-            table.insert(return_like_list, object_likes[i])
+       local page_size = tonumber(page_size)
+       
+       local obj_like_user_cnt = object_likes["_objectcount"] 
+       local return_len = page_size <= obj_like_user_cnt and page_size or obj_like_user_cnt
+       local rtn_like_list = {}
+       if is_friends == "1" then -- friend list
+           local user_friends = _get_userobj(uid)
+           if user_friends then
+               rtn_like_list = common.intersection(object_likes, user_friends, return_len)
+           else 
+               rtn_like_list = common.table_keys_first_n(object_likes, return_len)
+           end
+       elseif is_friends == "0" then
+           ngx.log(ngx.ERR, "no user and rrrr not is_friends ")
+           rtn_like_list = common.table_keys_first_n(object_likes, return_len)
        end
-       result = common.response_page_size(oid, return_like_list)  
+       result = common.response_page_size(oid, rtn_like_list)  
    else
        result = common.response_err_msg(oid, uid, 505, "oid not exists" )  
    end  
-end
 
-local function add_friend_handler(uid, friend_id) 
-   --- need check repeated---
-   local user_key = USER_PREFIX .. uid
-   local user_friends = shm_friends:get(user_key)
-   ngx.log(ngx.ERR, "friends", tostring(user_friends), "firend is ", friend_id)
-   if user_friends then
-       user_friends = cjson.decode(user_friends)
-       if not user_friends[friend_id] then
-           ngx.log(ngx.ERR, "insert", user_friends[friend_id]) 
-           user_friends[friend_id] = true
-       else
-           return common.response_err_msg(friend_id, uid, 507, "friends alreay exists") 
-       end
-   else
-       user_friends = {}
-       user_friends[friend_id] = true 
-   end
-   local _friends_list = common.table_keys(user_friends)
-   shm_friends:set(user_key, cjson.encode(user_friends))
-   rtn_msg = {} 
-   rtn_msg["uid"] = uid
-   rtn_msg["friends"] = _friends_list
-   result = cjson.encode(rtn_msg)
    return result
 end
 
+local function add_friend_handler(uid, friend_id) 
+   local user_friends = _get_userobj(uid)
+   if not user_friends then
+       user_friends = {[friend_id] = true, _objectcount = 1 }
+   else
+       if not user_friends[friend_id] then
+           user_friends[friend_id] = true
+           user_friends["_objectcount"] = user_friends["_objectcount"] + 1
+       else
+           return common.response_err_msg(friend_id, uid, 507, "friends alreay exists") 
+       end
+   end
+   -----set ----
+   shm_friends:set(USER_PREFIX .. uid, cjson.encode(user_friends))
+ 
+   ----return---
+   local _friends_list = common.table_keys_tonum(user_friends)
+   return cjson.encode({uid = uid, firends = _friends_list})
+end
+
+local function build_friendship()
+    local uid = ngx.var.arg_uid
+    local friend_id = ngx.var.arg_friend_id
+    if uid and friend_id then
+        return add_friend_handler( uid, friend_id)
+    else
+        return common.response_err_msg(friend_id, uid, 508, "no uri or friend_id") 
+    end
+end
+
+-------------------starting--------------------------
 local action_handler_obj = {
      ["like"] = like_handler,
      ["is_like"] = islike_handler,
@@ -109,17 +151,16 @@ local action_handler_obj = {
 }
 
 local action = ngx.var.arg_action
+
+----------------add friend--------------------------
+if action == "add_friend" then
+    build_friendship()
+end
+
 local oid = ngx.var.arg_oid 
 local uid = ngx.var.arg_uid
 
-if action == "add_friend" then
-    uid = ngx.var.arg_uid
-    friend_id = ngx.var.arg_friend_id
-    result = add_friend_handler(uid, friend_id)
-    ngx.say(result)
-    ngx.exit(200)
-end
-
+---------------check and verify--------------------
 local code, msg = common.check_validity(action, oid, uid)
 if code >= 500 then
     result = common.response_err_msg(oid, uid, code, msg) 
@@ -128,11 +169,8 @@ if code >= 500 then
 end
 
 ngx.log(ngx.ERR, "action---", action)
---local num1 = ffi_new("uint64_t", 10)
---num = luabit.lshift(num1, 33)
---ngx.log(ngx.ERR, "num---", tonumber(num))
+---------------execute handler base on action---------------
 current_hander = action_handler_obj[action]
-
 if current_hander then
     result = current_hander(oid, uid, ngx.var.arg_page_size, ngx.var.arg_is_friends)
 else

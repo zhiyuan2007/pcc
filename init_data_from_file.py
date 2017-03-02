@@ -29,6 +29,9 @@ def read_userdata_from_file(filename):
           if len(line) < 1 or line.startswith("#"):
               continue
           userinfo = line.strip().split(",")
+          if len(userinfo) != 2:
+             print "format error? %s" % (line)
+             continue
           print userinfo 
           datas.append(userinfo)
 
@@ -44,6 +47,9 @@ def read_likedata_from_file(filename):
           if len(line) < 1 or line.startswith("#"):
               continue
           infos = line.strip().split(":")
+          if len(infos) != 2:
+              print "format error? %s" %(line)
+              continue
           oid = infos[0]
           like_user = infos[1][1:-1]
           lu = like_user.split(",") 
