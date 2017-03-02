@@ -69,20 +69,35 @@ local function response_err_msg(oid, uid, error_code, error_msg)
     return cjson.encode(res)
 end
 
-local function check_validity(action, oid, uid) 
+local function check_validity(action, oid, uid, page_size, is_friends, friend_id) 
     if not action then
         return 502, "no action"
     end
+    if action == "add_friend" then
+       if uid and friend_id then 
+           return 200, "0k"
+       end
+       return 509, "no uid or friend_id" 
+    end
+
     if not oid then
         return 503, "no oid"
     end
     
-    if action == "like" or action == "islike" then
+    if action == "like" or action == "islike" or action == "count" then
        if not uid then
           return 504, "no uid" 
        end
+       return 200, "ok"
     end
-    return 200, "ok"
+    if action == "list" then
+       if page_size and is_friends then
+           return 200, "ok"
+       end
+       return 508, "no page_size or is_friend"
+    end
+
+    return 510, "parameter error"
 end
 
 local function table_keys( t )

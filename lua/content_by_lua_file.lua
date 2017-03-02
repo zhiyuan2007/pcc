@@ -101,7 +101,6 @@ local function list_handler(oid, uid, page_size, is_friends)
                rtn_like_list = common.table_keys_first_n(object_likes, return_len)
            end
        elseif is_friends == "0" then
-           ngx.log(ngx.ERR, "no user and rrrr not is_friends ")
            rtn_like_list = common.table_keys_first_n(object_likes, return_len)
        end
        result = common.response_page_size(oid, rtn_like_list)  
@@ -132,17 +131,6 @@ local function add_friend_handler(uid, friend_id)
    return cjson.encode({uid = uid, firends = _friends_list})
 end
 
-local function build_friendship()
-    local uid = ngx.var.arg_uid
-    local friend_id = ngx.var.arg_friend_id
-    if uid and friend_id then
-        return add_friend_handler( uid, friend_id)
-    else
-        return common.response_err_msg(friend_id, uid, 508, "no uri or friend_id") 
-    end
-end
-
--------------------starting--------------------------
 local action_handler_obj = {
      ["like"] = like_handler,
      ["is_like"] = islike_handler,
@@ -150,18 +138,17 @@ local action_handler_obj = {
      ["list"] = list_handler
 }
 
+-------------------starting--------------------------
+
 local action = ngx.var.arg_action
-
-----------------add friend--------------------------
-if action == "add_friend" then
-    build_friendship()
-end
-
 local oid = ngx.var.arg_oid 
 local uid = ngx.var.arg_uid
+local page_size = ngx.var.arg_page_size
+local is_friends = ngx.var.arg_is_friends
+local friend_id = ngx.var.arg_friend_id
 
 ---------------check and verify--------------------
-local code, msg = common.check_validity(action, oid, uid)
+local code, msg = common.check_validity(action, oid, uid, page_size, is_friends, friend_id)
 if code >= 500 then
     result = common.response_err_msg(oid, uid, code, msg) 
     ngx.say(result)
@@ -170,11 +157,16 @@ end
 
 ngx.log(ngx.ERR, "action---", action)
 ---------------execute handler base on action---------------
-current_hander = action_handler_obj[action]
+local current_hander = action_handler_obj[action]
 if current_hander then
-    result = current_hander(oid, uid, ngx.var.arg_page_size, ngx.var.arg_is_friends)
+    result = current_hander(oid, uid, page_size, is_friends)
 else
-    result = common.response_err_msg(oid, uid, 506, "action not support") 
+----------------add friend--------------------------
+    if action == "add_friend" then
+        result = add_friend_handler( uid, friend_id)
+    else
+        result = common.response_err_msg(oid, uid, 506, "action not support") 
+    end
 end
 
 ngx.say(result)
