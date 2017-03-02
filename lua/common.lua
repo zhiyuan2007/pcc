@@ -1,5 +1,10 @@
 local _M = {}
 
+local shm_objects = ngx.shared.shm_objects
+local shm_friends = ngx.shared.shm_friends
+local USER_PREFIX = "user:"
+local OBJECT_PREFIX = "object:"
+
 function new_redis()
 
     local red = redis:new()
@@ -17,6 +22,17 @@ function new_redis()
         return nil
     end
     return red
+end
+function lua_split(str, delimiter)
+    if str==nil or str=='' or delimiter==nil then
+        return nil 
+    end 
+        
+    local result = {}
+    for match in (str..delimiter):gmatch("(.-)"..delimiter) do
+        table.insert(result, match)
+    end 
+    return result
 end
 local function list_to_table(list)
 
@@ -84,7 +100,7 @@ local function check_validity(action, oid, uid, page_size, is_friends, friend_id
         return 503, "no oid"
     end
     
-    if action == "like" or action == "islike" or action == "count" then
+    if action == "like" or action == "is_like" or action == "count" then
        if not uid then
           return 504, "no uid" 
        end
@@ -156,6 +172,112 @@ local function  intersection(ta, tb, n)
    end
    return inter
 end
+
+local function get_userobj(uid)
+   local user_key = USER_PREFIX .. uid
+   local user_friends = shm_friends:get(user_key)
+   if user_friends then
+       return cjson.decode(user_friends)
+   end
+   return nil
+end
+
+
+local function add_friend_handler(uid, friend_id) 
+   local user_friends = get_userobj(uid)
+   if not user_friends then
+       user_friends = {[friend_id] = true, _objectcount = 1 }
+   else
+       if not user_friends[friend_id] then
+           user_friends[friend_id] = true
+           user_friends["_objectcount"] = user_friends["_objectcount"] + 1
+       else
+           return response_err_msg(friend_id, uid, 507, "friends alreay exists") 
+       end
+   end
+   -----set ----
+   shm_friends:set(USER_PREFIX .. uid, cjson.encode(user_friends))
+ 
+   ----return---
+   local _friends_list = table_keys_tonum(user_friends)
+   return cjson.encode({uid = uid, firends = _friends_list})
+end
+
+local function _get_objects(oid)
+   local object_key = OBJECT_PREFIX .. oid
+   local object_likes = shm_objects:get(object_key)
+   if object_likes then
+       return cjson.decode(object_likes)
+   end
+
+   return nil
+end
+
+local function islike_handler(oid, uid, page_size, is_friends)
+   local islike = 0
+   local object_likes = _get_objects(oid)
+   if object_likes then
+       if object_likes[uid] then
+          islike = 1
+       end
+   end
+   return response_islike(oid, uid, islike)
+end
+
+local function count_handler(oid, uid, page_size, is_friends)
+   local count = 0
+   local object_likes = _get_objects(oid)
+   if object_likes then
+       count = object_likes["_objectcount"]
+   end
+   return response_count(oid, count)  
+end
+
+
+local function list_handler(oid, uid, page_size, is_friends)
+   local object_likes = _get_objects(oid)
+   if object_likes then
+       local page_size = tonumber(page_size)
+       
+       local obj_like_user_cnt = object_likes["_objectcount"] 
+       local return_len = page_size <= obj_like_user_cnt and page_size or obj_like_user_cnt
+       local rtn_like_list = {}
+       if is_friends == "1" then -- friend list
+           local user_friends = get_userobj(uid)
+           if user_friends then
+               rtn_like_list = intersection(object_likes, user_friends, return_len)
+           else 
+               rtn_like_list = table_keys_first_n(object_likes, return_len)
+           end
+       elseif is_friends == "0" then
+           rtn_like_list = table_keys_first_n(object_likes, return_len)
+       end
+       result = response_page_size(oid, rtn_like_list)  
+   else
+       result = response_err_msg(oid, uid, 505, "oid not exists" )  
+   end  
+
+   return result
+end
+-----need add lock------
+local function like_handler(oid, uid, page_size, is_friends)
+   local object_likes = _get_objects(oid)
+   if object_likes then
+       if object_likes[uid] then
+           return response_err_msg(oid, uid, 501, "object already been liked.") 
+       else
+           object_likes[uid] = true
+           object_likes['_objectcount'] = object_likes['_objectcount'] + 1
+       end
+   else
+       object_likes = { _objectcount = 1, [uid] = true} 
+   end
+
+   shm_objects:set(OBJECT_PREFIX .. oid, cjson.encode(object_likes))
+   return response_like(oid, uid, table_keys_tonum(object_likes))
+end
+
+
 _M = {
     new_redis                = new_redis,
     lua_split                = lua_split,
@@ -169,6 +291,12 @@ _M = {
     table_keys_tonum         = table_keys_tonum,
     table_keys_first_n       = table_keys_first_n,
     intersection             = intersection,
+    add_friend_handler       = add_friend_handler,
+    get_userobj              = get_userobj,
+    like_handler             = like_handler,
+    islike_handler           = islike_handler,
+    count_handler            = count_handler,
+    list_handler             = list_handler,
     is_like                  = is_like
 }
 return _M
