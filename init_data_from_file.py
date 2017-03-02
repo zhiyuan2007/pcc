@@ -53,7 +53,7 @@ def read_likedata_from_file(filename):
 
     return datas
     
-def insert_users(filename):
+def init_users(filename):
     conn = init_conn()
     cur=conn.cursor()
     users = read_userdata_from_file(filename)
@@ -68,14 +68,24 @@ def insert_users(filename):
     cur.close()
     conn.close()
 
+def init_friends(url, filename):
+    friend_datas = read_userdata_from_file(filename)
+    _send_request(url, friend_datas, "friend")
+
 def init_likes(url, filename):
-    likedatas = read_likedata_from_file(filename)
+    like_datas = read_likedata_from_file(filename)
+    _send_request(url, like_datas, "like")
+
+def _send_request(url, data_list, type):
     httpClient  = httplib.HTTPConnection("127.0.0.1", 8888, timeout=30);
     try:
         headers     = {};
         params      = {};
-        for likedata in likedatas:
-            send_url1 = url + "?action=like&oid=" + likedata[0] + "&uid=" + likedata[1]
+        for data in data_list:
+            if type == "like":
+                send_url1 = url + "?action=like&oid=" + data[0] + "&uid=" + data[1]
+            elif type == "friend":
+                send_url1 = url + "?action=add_friend&friend_id=" + data[1] + "&uid=" + data[0]
             print send_url1
             httpClient.request("GET",send_url1,urllib.urlencode(params),headers);
             response    = httpClient.getresponse();
@@ -86,5 +96,6 @@ def init_likes(url, filename):
     if httpClient:
         httpClient.close();
 
-insert_users("data/users.txt")
+#init_users("data/users.txt")
+init_friends(URL, "data/user_friends.txt")
 init_likes(URL, "data/object_like.txt")
