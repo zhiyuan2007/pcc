@@ -1,67 +1,28 @@
 cjson = require 'cjson.safe'
 redis = require 'redis'
 common = require 'common'
+mysql = require "resty.mysql"
 
-local function read_user_friendship_from_file(filename)
-    local fp = io.open(filename, "r")
-    if not fp then
-        ngx.log(ngx.ERR, "open file failed")
-        return
-    end
-    while 1 do
-        local line = fp:read("*l") 
-        if not line then
-           ngx.log(ngx.WARN, "end of file")
-           break
-        end
-        if string.sub(line, 1,1 ) == '#' then
-            goto goon
-        end
-        linedata = common.lua_split(line, ",") 
-        if #linedata == 2 then
-           uid = linedata[1] 
-           fid = linedata[2]
-           common.add_friend_handler(uid,fid)
-        end
-        ::goon::
-    end
-    fp:close()
-end
+lock = require "lock"
+insert_lock = lock:new("insert_lock")
 
-local function read_object_likeship_from_file(filename)
-    local fp = io.open(filename, "r")
-    if not fp then
-        ngx.log(ngx.ERR, "open file failed")
-        return
-    end
-    while 1 do
-        local line = fp:read("*l") 
-        if not line then
-           ngx.log(ngx.WARN, "end of file")
-           break
-        end
-        if string.sub(line, 1,1 ) == '#' then
-            goto goon
-        end
-        linedata = common.lua_split(line, ":") 
-        if #linedata == 2 then
-           oid = linedata[1] 
-           if string.sub(linedata[2], 1, 1) == '[' and string.sub(linedata[2], -1, -1) == ']' then
-              uid_str = string.sub(linedata[2], 2, -2)
-              uid_list = common.lua_split(uid_str, ",")
-              for uid in ipairs(uid_list) do
-                  --ngx.log(ngx.WARN, "oid ", oid, " uid " , uid)
-                  common.like_handler(oid, uid, nil,nil)
-              end
-           end
-            
-        end
-        ::goon::
-    end
-    fp:close()
-end
+local LINE_COUNT = 100
+PORT = 3306
+DATABASE = "pcc"
+USER = "pcc"
+PASSWORD = "pcc"
 
-read_user_friendship_from_file("/home/liuguirong/nginx/conf/data/friends.txt")
-read_object_likeship_from_file("/home/liuguirong/nginx/conf/data/likes.txt")
+IS_TTL = 10
+COUNT_TTL = 5
+LIST_TTL = 10
+OBJ_LIST_TTL = 10
+FRIEND_TTL = 30
 
+SERVER = {"192.168.0.3", "192.168.0.4", "192.168.0.5"}
 
+action_handler_obj = {
+     ["like"] = common.like_handler,
+     ["batch_like"] = common.batch_like_handler,
+     ["is_like"] = common.islike_handler,
+     ["count"] = common.count_handler,
+}
