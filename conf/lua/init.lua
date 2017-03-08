@@ -1,5 +1,4 @@
 cjson = require 'cjson.safe'
-redis = require 'redis'
 common = require 'common'
 mysql = require "resty.mysql"
 
@@ -18,7 +17,7 @@ LIST_TTL = 10
 OBJ_LIST_TTL = 10
 FRIEND_TTL = 30
 
-SERVER = {"192.168.0.3", "192.168.0.4", "192.168.0.5"}
+SERVER = {"192.168.153.122"}
 
 action_handler_obj = {
      ["like"] = common.like_handler,

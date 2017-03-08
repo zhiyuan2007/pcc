@@ -1,29 +1,32 @@
 local _M = {}
 
 local shm_objects = ngx.shared.shm_objects
-local shm_friends = ngx.shared.shm_friends
-local shm_input_queue = ngx.shared.shm_queue
-local USER_PREFIX = "user:"
-local OBJECT_PREFIX = "object:"
 
-function new_redis()
+local OK                = 200
+local BEEN_LIKED        = 501
+local NO_PARAS_ACTION   = 502
+local NO_PARAS_OID      = 503
+local NO_PARAS_UID      = 504
+local NO_LIKED_UID      = 505
+local INSERT_SQL_ERROR  = 506
+local NO_PARAS_ISFRIEND = 507  
+local NO_PARAS_PAGESIZE = 508  
+local UID_NOT_EXISTS    = 510
+local NOT_SUPPORT_ACTION = 509
 
-    local red = redis:new()
+local ERRINFO = {
+    [BEEN_LIKED] = "object already been liked.",
+    [NO_PARAS_ACTION] = "no paras action",
+    [NO_PARAS_OID] = "no paras oid",
+    [NO_PARAS_UID] = "no paras uid",
+    [NO_LIKED_UID] = "not liked user id",
+    [INSERT_SQL_ERROR] = "insert failed, maybe sql format wrong.",
+    [NO_PARAS_PAGESIZE] = "no paras page_size",
+    [NO_PARAS_ISFRIEND] = "no paras is_friends",
+    [NOT_SUPPORT_ACTION] = "not support action"
+    [UID_NOT_EXISTS] = "uid not exists"
+ }
 
-    red:set_timeout(3000)
-
-    local ok, err = red:connect("unix:/var/lib/redis/redis.sock")
-    if not ok then
-        ngx.log(ngx.CRIT, err)
-        return nil
-    end
-    local ok, err = red:select(1)
-    if not ok then
-        ngx.log(ngx.CRIT, err)
-        return nil
-    end
-    return red
-end
 function lua_split(str, delimiter)
     if str==nil or str=='' or delimiter==nil then
         return nil 
@@ -34,16 +37,6 @@ function lua_split(str, delimiter)
         table.insert(result, match)
     end 
     return result
-end
-local function list_to_table(list)
-
-    local res = {}
-
-    for i = 1, #(list), 2 do
-        res[list[i]] = list[i + 1]
-    end
-
-    return res
 end
 
 local function response_like(oid, uid, like_list)
@@ -77,78 +70,42 @@ local function response_page_size(oid, like_list)
     return cjson.encode(res)
 end
 
-local function response_err_msg(oid, uid, error_code, error_msg)
+local function response_err_msg(oid, uid, error_code)
     local res = {}
     res["oid"] = oid
     res["uid"] = uid
     res["error_code"] = error_code 
-    res["error_msg"] =  error_msg
+    res["error_msg"] = ERRINFO[error_code] 
     return cjson.encode(res)
 end
 
-local function check_validity(action, oid, uid, page_size, is_friends, friend_id) 
+local function check_validity(action, oid, uid, page_size, is_friends) 
     if not action then
-        return 502, "no action"
-    end
-    if action == "add_friend" then
-       if uid and friend_id then 
-           return 200, "0k"
-       end
-       return 509, "no uid or friend_id" 
+        return NO_PARAS_ACTION
     end
 
     if not oid then
-        return 503, "no oid"
+        return NO_PARAS_OID
     end
     
     if action == "like" or action == "is_like" or action == "count" then
        if not uid then
-          return 504, "no uid" 
+          return NO_PARAS_UID
        end
-       return 200, "ok"
-    end
-    if action == "list" then
-       if page_size and is_friends then
-           return 200, "ok"
+    elseif action == "list" then
+       if not page_size then
+           return NO_PARAS_PAGESIZE
        end
-       return 508, "no page_size or is_friend"
+       if not is_friends then
+           return NO_PARAS_ISFRIEND
+       end
+    else
+       return NOT_SUPPORT_ACTION
     end
 
-    return 510, "parameter error"
+    return OK
 end
 
-local function table_keys( t )
-    local keys = {}
-    for k, _ in pairs( t ) do
-        if string.sub(k, 1, 1) ~= '_'  then
-           keys[#keys + 1] = k
-        end
-    end
-    return keys
-end
-
-local function table_keys_first_n(t, n)
-    local keys = {}
-    for k, _ in pairs( t ) do
-        if string.sub(k, 1, 1) ~= '_'  then
-           keys[#keys + 1] = tonumber(k)
-           if (#keys >= n) then
-              break
-           end
-        end
-    end
-    return keys
-end
-
-local function table_keys_tonum( t )
-    local keys = {}
-    for k, _ in pairs( t ) do
-        if string.sub(k, 1, 1) ~= '_'  then
-           keys[#keys + 1] = tonumber(k)
-        end
-    end
-    return keys
-end
 
 local function  intersection(ta, tb, n) 
    local inter = {}
@@ -174,31 +131,12 @@ local function  intersection(ta, tb, n)
    return inter
 end
 
-local function get_userobj(uid)
-   local user_key = USER_PREFIX .. uid
-   local user_friends = shm_friends:get(user_key)
-   if user_friends then
-       return cjson.decode(user_friends)
-   end
-   return nil
-end
-
-
+--------cache result info shared-memory--------
 local function _isfriend(uid, fid)
    return shm_objects:get("obj:" .. uid ..":" .. fid)
 end
 local function _setfriend(uid, fid)
    shm_objects:set("obj:" .. uid ..":" .. fid, true, FRIEND_TTL)
-end
-
-local function _get_objects(oid)
-   local object_key = OBJECT_PREFIX .. oid
-   local object_likes = shm_objects:get(object_key)
-   if object_likes then
-       return cjson.decode(object_likes)
-   end
-
-   return nil
 end
 
 local function _islike(oid, uid)
@@ -223,15 +161,10 @@ local function _setlistwith(oid, uid, page_size, cursor, isfriend, value)
    shm_objects:set("friend:" ..":" .. isfriend .. oid .. ":".. uid .. ":".. cursor ..":".. page_size, value, OBJ_LIST_TTL)
 end
 
-local function testmsg(msg)
-        ngx.say(msg) 
-        ngx.exit("200")
-end
-
 local function connect_mysql(server)
      local db, err = mysql:new()
      if not db then
-         ngx.say("failed to instantiate mysql: ", err)
+         ngx.say("failed to init mysql: ", err)
          return
      end
      db:set_timeout(1000) -- 1 sec
@@ -244,7 +177,7 @@ local function connect_mysql(server)
          max_packet_size = 1024 * 1024 }
 
      if not ok then
-        ngx.say("failed to connect------: ", err, ": ", errcode, " ", sqlstate)
+        ngx.say("failed to connect:", err, ": ", errcode, " ", sqlstate)
         return
     end  
     return db;
@@ -263,8 +196,6 @@ local function query_from_mysql(server, sql)
         return nil
     end
    
-    --res = cjson.encode(res)
-    
     local ok, err = db:set_keepalive(10000, 100)
     if not ok then
 	ngx.say("failed to set keepalive: ", err)
@@ -275,55 +206,6 @@ local function query_from_mysql(server, sql)
     end 
     return nil 
 
-end
-local function insert_user_to_mysql(server, uid, fid)
-
-    local db = connect_mysql(server)
-    if not db then
-        return nil
-    end
-    
-    local sql = "insert into friends(uid, fid) values (" .. uid .. "," .. fid .. ")"
-    res, err, errcode, sqlstate = db:query(sql)
-    if not res then
-       if errcode == 1062 then
-           return true
-       end
-       ngx.log(ngx.WARN, "bad result: ", err, ": ", errcode, ": ", sqlstate, ".")
-       return nil
-    end
-
-    --ngx.log(ngx.ERR, res.affected_rows, " rows inserted into table cats ", "(last insert id: ", res.insert_id, ")")
-
-    local ok, err = db:set_keepalive(10000, 100)
-    if not ok then
-        return nil
-    end
-
-    return res
-
-end
-
-local function insert_friend_to_mysql(server, uid, fid)
-
-    local db = connect_mysql(server)
-    if not db then
-        return nil
-    end
-    
-    local sql = "insert into friends(uid, fid) values (" .. uid .. "," .. fid .. ")"
-    res, err, errcode, sqlstate = db:query(sql)
-    if not res then
-       if errcode == 1062 then
-           res = 1
-           goto goonquery
-       end
-       ngx.log(ngx.WARN, "bad result: ", err, ": ", errcode, ": ", sqlstate, ".")
-       return nil
-    end
-
-    ::goonquery::
-    return res
 end
 
 local function insert_to_mysql(server, oid, uid)
@@ -342,7 +224,6 @@ local function insert_to_mysql(server, oid, uid)
        ngx.log(ngx.WARN, "bad result: ", err, ": ", errcode, ": ", sqlstate, ".")
        return nil
     end
-    --ngx.log(ngx.ERR, res.affected_rows, " rows inserted into table cats ", "(last insert id: ", res.insert_id, ")")
 
     ::goonquery::
     local sql = "select uid from object_likes where oid = " .. oid 
@@ -355,6 +236,7 @@ local function insert_to_mysql(server, oid, uid)
     return res
 
 end
+
 local function islike_handler(oid, uid, page_size, is_friends)
    local islike =  _islike(oid, uid)
    if not islike then
@@ -375,7 +257,6 @@ local function count_handler(oid, uid, page_size, is_friends)
         local sql = "select count(*) as total  from object_likes where oid =" .. oid 
         local res = query_from_mysql(ngx.var.server, sql)
         if res then 
-           --res = cjson.decode(res)
            count = tonumber(res[1]["total"])
            _setcount(oid, count, COUNT_TTL)
         else
@@ -417,6 +298,7 @@ end
 local function _getresultlist(db_result, idstr, n, cursor) 
     return _getresult(db_result, idstr, n , "list", cursor)
 end
+
 local function list_handler(oid, uid, page_size, is_friends, cursor)
    local result = _exitslistwith(oid, uid, page_size, cursor, is_friends)
    if not result then
@@ -424,7 +306,7 @@ local function list_handler(oid, uid, page_size, is_friends, cursor)
        local sql = "select uid from object_likes where oid = " .. oid  .. " limit " .. 5*page_size
        local obj_likes  = query_from_mysql(server, sql)
        if not obj_likes then
-           return response_err_msg(oid, uid, "505", "no like user")
+           return response_err_msg(oid, uid, NO_LIKED_UID)
        end
        local rtn_like_list = {}
        if is_friends == "1" then -- friend list
@@ -436,11 +318,10 @@ local function list_handler(oid, uid, page_size, is_friends, cursor)
                local obj_dict = _getresultdict(obj_likes, "uid", page_size, cursor) 
                rtn_like_list = intersection(fri_dict, obj_dict, page_size)
            else 
-               return response_err_msg(oid, uid, 505, "uid not exists")  
+               return response_err_msg(oid, uid, UID_NOT_EXISTS)  
            end
        elseif is_friends == "0" then
            rtn_like_list = _getresultlist(obj_likes, "uid", page_size, cursor) 
-           --rtn_like_list = table_keys_first_n(object_likes, return_len)
        end
        result = response_page_size(oid, rtn_like_list)  
    end  
@@ -453,7 +334,7 @@ local function like_handler(oid, uid, page_size, is_friends)
 
    if _islike(oid, uid) then
       _setislike(oid, uid)
-      return response_err_msg(oid, uid, 501, "object already been liked.") 
+      return response_err_msg(oid, uid, BEEN_LIKED) 
    end
    
    --local elapsed, err = insert_lock:lock("insert_db_lock")
@@ -464,7 +345,7 @@ local function like_handler(oid, uid, page_size, is_friends)
      
    if not res then
       --insert_lock:unlock()
-      return response_err_msg(oid, uid, 502, "insert failed, myby format table wor.") 
+      return response_err_msg(oid, uid, INSERT_SQL_ERROR) 
    end
 
    if res then
@@ -479,65 +360,12 @@ local function like_handler(oid, uid, page_size, is_friends)
    return response_like(oid, uid, object_likelist)
 end
 
------need add lock------
-local function batch_like_handler(oid, uid_input, page_size, is_friends)
-   local object_likes = _get_objects(oid)
-   if not object_likes then
-       object_likes = {_objectcount = 0}
-   end 
-   uid_list = lua_split(uid_input, ",")
-   for _, uid in pairs(uid_list) do
-        if object_likes[uid] then
-           ngx.log(ngx.WARN, "repeated ", uid, "oid ", oid, "str ", uid_input) 
-        else
-           object_likes[uid] = true
-           object_likes['_objectcount'] = object_likes['_objectcount'] + 1
-        end
-   end
-
-   local ok, err = shm_objects:set(OBJECT_PREFIX .. oid, cjson.encode(object_likes))
-   if err then
-       ngx.log(ngx.ERR, "safe set error : ", err)
-       return common.response_err_msg(oid, uid, 512, err) 
-   end
-   return response_like(oid, "0", table_keys_tonum(object_likes))
-end
-local function add_friend_handler(uid, fid) 
-   if _isfriend(uid, fid) then
-      return response_err_msg(oid, uid, 501, "object already been liked.") 
-   end
-   
-   local res = insert_friend_to_mysql(ngx.var.uid_server, uid, fid) 
-   if not res then
-      return response_err_msg(oid, uid, 501, "insert failed. may exitsts") 
-   end
-   if res then
-      _setfriend(uid, fid)
-   end
-   return response_err_msg(fid, uid, 200, "object insert success.") 
-end
-
 _M = {
-    new_redis                = new_redis,
-    lua_split                = lua_split,
-    response_islike          = response_islike,
-    response_count           = response_count,
-    response_page_size       = response_page_size,
-    response_err_msg         = response_err_msg,
-    response_like            = response_like,
     check_validity           = check_validity,
-    table_keys               = table_keys,
-    table_keys_tonum         = table_keys_tonum,
-    table_keys_first_n       = table_keys_first_n,
-    intersection             = intersection,
-    add_friend_handler       = add_friend_handler,
-    get_userobj              = get_userobj,
     like_handler             = like_handler,
     islike_handler           = islike_handler,
     count_handler            = count_handler,
     list_handler             = list_handler,
-    batch_like_handler       = batch_like_handler,
-    is_like                  = is_like
 }
 return _M
 
