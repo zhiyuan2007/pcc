@@ -23,7 +23,7 @@ local ERRINFO = {
     [INSERT_SQL_ERROR] = "insert failed, maybe sql format wrong.",
     [NO_PARAS_PAGESIZE] = "no paras page_size",
     [NO_PARAS_ISFRIEND] = "no paras is_friends",
-    [NOT_SUPPORT_ACTION] = "not support action"
+    [NOT_SUPPORT_ACTION] = "not support action",
     [UID_NOT_EXISTS] = "uid not exists"
  }
 
@@ -361,11 +361,12 @@ local function like_handler(oid, uid, page_size, is_friends)
 end
 
 _M = {
+    response_err_msg         = response_err_msg,
     check_validity           = check_validity,
     like_handler             = like_handler,
     islike_handler           = islike_handler,
     count_handler            = count_handler,
-    list_handler             = list_handler,
+    list_handler             = list_handler
 }
 return _M
 

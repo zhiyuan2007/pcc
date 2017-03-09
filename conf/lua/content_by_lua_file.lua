@@ -1,9 +1,9 @@
 
 -------------------starting--------------------------
 
-local args ={}
+local args = {}
 if "GET" == ngx.req.get_method() then
-€€ args = ngx.req.get_uri_args()
+    args = ngx.req.get_uri_args()
 elseif "POST" == ngx.req.get_method() then
     ngx.req.read_body()
     args = ngx.req.get_post_args()
@@ -14,7 +14,7 @@ local action = args["action"]
 local cursor = args["cursor"]
 local page_size = args["page_size"]
 local is_friends = args["is_friends"]
-ngx.log(ngx.ERR, "action: ", action,  " oid : " , oid, "uid:",  uid, "method", ngx.req.get_method())
+--ngx.log(ngx.ERR, "action: ", action,  " oid : " , oid, "uid:",  uid, "method", ngx.req.get_method())
 
 cursor = cursor and tonumber(cursor) or 0
 
