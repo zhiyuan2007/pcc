@@ -11,8 +11,7 @@ performance challenge champion
 ##
   所以架构是，采用mysql存储数据,SSD存储，采用openresty实现业务逻辑，同时把从数据库得到的结果缓存到nginx的共享内存里，
   每次响应请求，都是先查缓存，有数据就直接返回，没有数据则查数据库。
-
-
+  
 -------
 由于数据量过大，只有一台测试机，实际导入了284236000条用户好友数据，293097380条对象被关注数据。
 
@@ -40,27 +39,27 @@ is_like 接口，uid和oid都是随机的。
 Running 30s test @ http://192.168.153.122:8888/pcc
   16 threads and 600 connections
   Thread Stats   Avg      Stdev     Max   +/- Stdev
-    Latency   109.43ms  236.80ms   1.26s    86.99%
-    Req/Sec     2.57k   322.97     6.25k    77.31%
-  1227324 requests in 30.10s, 269.04MB read
-Requests/sec:  40775.43
-Transfer/sec:      8.94MB
+    Latency   124.41ms  250.84ms   1.49s    85.60%
+    Req/Sec     2.70k   434.99     7.46k    78.34%
+  1282231 requests in 30.10s, 281.25MB read
+Requests/sec:  42598.88
+Transfer/sec:      9.34MB
 </pre>
 
 <pre>
-count 接口，uid和oid都是随机的。
+[root@client2 wrk-4.0.2]# wrk -d 30s -c 600 -t 16  -s scripts/post.lua  "http://192.168.153.122:8888/pcc" 
 Running 30s test @ http://192.168.153.122:8888/pcc
   16 threads and 600 connections
-1  Thread Stats   Avg      Stdev     Max   +/- Stdev
-    Latency   131.04ms  258.88ms   1.05s    84.85%
-    Req/Sec     3.39k   701.97     9.48k    82.87%
-  1615964 requests in 30.10s, 319.17MB read
-Requests/sec:  53685.75
-Transfer/sec:     10.60MB
+  Thread Stats   Avg      Stdev     Max   +/- Stdev
+    Latency   133.15ms  260.79ms   1.03s    84.58%
+    Req/Sec     3.88k     0.89k   10.77k    83.93%
+  1842985 requests in 30.10s, 363.39MB read
+Requests/sec:  61229.32
+Transfer/sec:     12.07MB
 </pre>
 
 <pre>
-list 接口，uid和oid都是随机的。
+list 接口，uid和oid都是随机的。is_friends=0
 [root@client2 wrk-4.0.2]# wrk -d 30s -c 600 -t 16  -s scripts/post.lua  "http://192.168.153.122:8888/pcc" 
 Running 30s test @ http://192.168.153.122:8888/pcc
   16 threads and 600 connections
@@ -70,4 +69,39 @@ Running 30s test @ http://192.168.153.122:8888/pcc
   1066803 requests in 30.10s, 274.44MB read
 Requests/sec:  35443.28
 Transfer/sec:      9.12MB
+</pre>
+
+<pre>
+list 接口，uid和oid都是随机的。is_friends=0
+[root@client2 wrk-4.0.2]# wrk -d 30s -c 600 -t 16  -s scripts/post.lua  "http://192.168.153.122:8888/pcc" 
+Running 30s test @ http://192.168.153.122:8888/pcc
+  16 threads and 600 connections
+  Thread Stats   Avg      Stdev     Max   +/- Stdev
+    Latency   139.54ms  263.65ms   1.32s    84.39%
+    Req/Sec     2.30k   365.12     7.42k    75.81%
+  1096630 requests in 30.10s, 278.29MB read
+Requests/sec:  31432.77
+Transfer/sec:      9.25MB
+
+</pre>
+
+<pre>
+post.lua 脚本内容如下：
+wrk.method = "POST"
+wrk.body    = nil
+wrk.headers["Content-Type"] = "application/x-www-form-urlencoded"
+
+local i = 0
+request = function()
+    uid = i % 10000000;
+    oid = i % 30000000; 
+    --qs = "action=count&oid="..oid.."&uid="..uid
+    --qs = "action=is_like&oid="..oid.."&uid="..uid
+    --qs = "action=list&oid="..oid.."&uid="..uid .. "&page_size=100&is_friends=0&cursor=0"
+    qs = "action=list&oid="..oid.."&uid="..uid .. "&page_size=100&is_friends=1&cursor=0"
+    local body = wrk.format(nil, nil, nil, qs)
+    i = i + 1
+    return body
+end
+
 </pre>
